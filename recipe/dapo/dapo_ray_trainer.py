@@ -26,13 +26,14 @@ import torch
 from tqdm import tqdm
 
 from verl import DataProto
+from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
     compute_timing_metrics,
     reduce_metrics,
 )
-from verl.trainer.ppo.ray_trainer import AdvantageEstimator, RayPPOTrainer, _timer, apply_kl_penalty, compute_advantage
+from verl.trainer.ppo.ray_trainer import AdvantageEstimator, RayPPOTrainer, _timer, apply_kl_penalty, compute_advantage, compute_response_mask
 
 
 class RayDAPOTrainer(RayPPOTrainer):
@@ -91,10 +92,10 @@ class RayDAPOTrainer(RayPPOTrainer):
                 new_batch: DataProto = DataProto.from_single_dict(batch_dict)
                 num_gen_batches += 1
                 # pop those keys for generation
-                if "multi_modal_inputs" in new_batch.non_tensor_batch.keys():
+                if "multi_modal_data" in new_batch.non_tensor_batch.keys():
                     gen_batch = new_batch.pop(
                         batch_keys=["input_ids", "attention_mask", "position_ids"],
-                        non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data", "multi_modal_inputs"],
+                        non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
                     )
                 else:
                     gen_batch = new_batch.pop(
@@ -108,6 +109,8 @@ class RayDAPOTrainer(RayPPOTrainer):
                     # generate a batch
                     with _timer("gen", timing_raw):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                        timing_raw.update(gen_batch_output.meta_info["timing"])
+                        gen_batch_output.meta_info.pop("timing", None)
 
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer("gen_max", timing_raw):
@@ -152,7 +155,6 @@ class RayDAPOTrainer(RayPPOTrainer):
 
                         new_batch.batch["token_level_scores"] = reward_tensor
 
-                        print(f"{list(reward_extra_infos_dict.keys())=}")
                         if reward_extra_infos_dict:
                             new_batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
 
@@ -200,6 +202,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                             max_num_gen_batches = self.config.algorithm.filter_groups.max_num_gen_batches
                             if max_num_gen_batches <= 0 or num_gen_batches < max_num_gen_batches:
                                 print(f"{num_gen_batches=}. Keep generating...")
+                                progress_bar.update(1)
                                 continue
                             else:
                                 raise ValueError(f"{num_gen_batches=} >= {max_num_gen_batches=}." + " Generated too many. Please check if your data are too difficult." + " You could also try set max_num_gen_batches=0 to enable endless trials.")
@@ -208,9 +211,15 @@ class RayDAPOTrainer(RayPPOTrainer):
                             traj_bsz = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
                             batch = batch[:traj_bsz]
 
-                    # balance the number of valid tokens on each dp rank.
-                    # Note that this breaks the order of data inside the batch.
-                    # Please take care when you implement group based adv computation such as GRPO and rloo
+                    # === Updating ===
+
+                    batch.batch["response_mask"] = compute_response_mask(batch)
+
+                    # Balance the number of valid tokens across DP ranks.
+                    # NOTE: This usually changes the order of data in the `batch`,
+                    # which won't affect the advantage calculation (since it's based on uid),
+                    # but might affect the loss calculation (due to the change of mini-batching).
+                    # TODO: Decouple the DP balancing and mini-batching.
                     if self.config.trainer.balance_batch:
                         self._balance_batch(batch, metrics=metrics)
 
@@ -220,6 +229,13 @@ class RayDAPOTrainer(RayPPOTrainer):
                     # recompute old_log_probs
                     with _timer("old_log_prob", timing_raw):
                         old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                        entropys = old_log_prob.batch["entropys"]
+                        response_masks = batch.batch["response_mask"]
+                        loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
+                        entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                        old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
+                        metrics.update(old_log_prob_metrics)
+                        old_log_prob.batch.pop("entropys")
                         batch = batch.union(old_log_prob)
 
                     if self.use_reference_policy:

@@ -21,13 +21,16 @@ import torch
 import torch.distributed
 from megatron.core import mpu, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject
+from transformers import GenerationConfig
 
 from verl.models.weight_loader_registry import get_weight_saver
 from verl.utils.fs import is_non_local
 from verl.utils.megatron_utils import (
+    get_hf_config_and_tokenizer_checkpoint_path,
     get_hf_model_checkpoint_path,
     get_model_checkpoint_path,
     get_optimizer_checkpoint_path,
+    get_optimizer_scheduler_checkpoint_path,
     get_rng_states_checkpoint_path,
 )
 
@@ -61,7 +64,9 @@ class MegatronCheckpointManager(BaseCheckpointManager):
         share_embeddings_and_output_weights: bool,
         tokenizer,
         optimizer,
+        optimizer_scheduler,
         use_distributed_optimizer: bool,
+        use_checkpoint_opt_param_scheduler: bool = False,
         checkpoint_contents: Optional[list] = None,
         **kwargs,
     ):
@@ -70,7 +75,7 @@ class MegatronCheckpointManager(BaseCheckpointManager):
         super().__init__(
             model,
             optimizer=optimizer,
-            lr_scheduler=None,
+            lr_scheduler=optimizer_scheduler,
             processing_class=tokenizer,
             checkpoint_contents=checkpoint_contents,
         )
@@ -86,6 +91,7 @@ class MegatronCheckpointManager(BaseCheckpointManager):
         self.share_embeddings_and_output_weights = share_embeddings_and_output_weights
         self.model_path = self.config.model.path
         self.use_distributed_optimizer = use_distributed_optimizer
+        self.use_checkpoint_opt_param_scheduler = use_checkpoint_opt_param_scheduler
 
         self.rank = torch.distributed.get_rank()
 
@@ -211,6 +217,15 @@ class MegatronCheckpointManager(BaseCheckpointManager):
 
         if "extra" in self.checkpoint_contents:
             self.load_rng_states(local_path)
+            if self.use_checkpoint_opt_param_scheduler:
+                optimizer_scheduler_path = get_optimizer_scheduler_checkpoint_path(local_path, only_rank0_save=False)
+                if os.path.exists(optimizer_scheduler_path):
+                    print(f"Loading optimizer scheduler from {optimizer_scheduler_path}")
+                    state_dict = torch.load(optimizer_scheduler_path, weights_only=False)
+                    if self.lr_scheduler is not None:
+                        self.lr_scheduler.load_state_dict(state_dict)
+                else:
+                    print(f"Optimizer scheduler path {optimizer_scheduler_path} does not exist, skipping loading.")
 
         if del_local_after_load:
             try:
@@ -240,17 +255,28 @@ class MegatronCheckpointManager(BaseCheckpointManager):
 
             print(f"Saving sharded model checkpoint to {local_path}")
             model_ckpt_path = get_model_checkpoint_path(local_path)
-            hf_model_ckpt_path = get_hf_model_checkpoint_path(local_path)
+            hf_config_and_tokenizer_path = get_hf_config_and_tokenizer_checkpoint_path(local_path)
             ckpt_name = self.get_checkpoint_name(model_ckpt_path, return_base_dir=False)
             torch.save(state_dicts, os.path.join(ckpt_name))
-            self.processing_class.save_pretrained(hf_model_ckpt_path)  # tokenizer will be saved to hf_model_ckpt_path
-            print(f"Saved checkpoint to {model_ckpt_path}")
-            if hdfs_path is not None:
-                print(f"Uploading checkpoint to {hdfs_path}")
-                from verl.utils import hdfs_io
 
-                hdfs_io.makedirs(hdfs_path, exist_ok=True)
-                hdfs_io.copy(src=model_ckpt_path, dst=hdfs_path, dirs_exist_ok=True)
+            print(f"Saved checkpoint to {model_ckpt_path}")
+            if self.rank == 0:
+                self.processing_class.save_pretrained(hf_config_and_tokenizer_path)
+                self.hf_config.save_pretrained(hf_config_and_tokenizer_path)
+                if hasattr(self.hf_config, "name_or_path") and self.hf_config.name_or_path:
+                    try:
+                        generation_config = GenerationConfig.from_pretrained(self.hf_config.name_or_path)
+                        generation_config.save_pretrained(hf_config_and_tokenizer_path)
+                    except Exception:
+                        # if the generation config isn't available, we don't save it
+                        pass
+                if hdfs_path is not None:
+                    print(f"Uploading checkpoint to {hdfs_path}")
+                    from verl.utils import hdfs_io
+
+                    hdfs_io.makedirs(hdfs_path, exist_ok=True)
+                    hdfs_io.copy(src=model_ckpt_path, dst=hdfs_path, dirs_exist_ok=True)
+                    hdfs_io.copy(src=hf_config_and_tokenizer_path, dst=hdfs_path, dirs_exist_ok=True)
 
         if "hf_model" in self.checkpoint_contents:
             # wait for everyone to dump to local
@@ -263,11 +289,10 @@ class MegatronCheckpointManager(BaseCheckpointManager):
             )
 
             torch.distributed.barrier()
-            print(f"self.param_dtype: {self.param_dtype}")
-            for key in state_dict.keys():
-                print(f"state_dict[key].dtype: {key} {state_dict[key].dtype}")
-            torch.distributed.barrier()
             if self.rank == 0:
+                print(f"self.param_dtype: {self.param_dtype}")
+                for key in state_dict.keys():
+                    print(f"state_dict[key].dtype: {key} {state_dict[key].dtype}")
                 hf_model_ckpt_path = get_hf_model_checkpoint_path(local_path)
                 import warnings
 
@@ -285,6 +310,8 @@ class MegatronCheckpointManager(BaseCheckpointManager):
 
                         model = AutoModelForCausalLM.from_pretrained(self.config.model.path, torch_dtype="auto")
                 model.save_pretrained(hf_model_ckpt_path, state_dict=state_dict)
+                self.processing_class.save_pretrained(hf_model_ckpt_path)
+
                 if hdfs_path is not None:
                     print(f"Uploading checkpoint to {hdfs_path}")
                     from verl.utils import hdfs_io
@@ -309,5 +336,12 @@ class MegatronCheckpointManager(BaseCheckpointManager):
             rng_state = self.get_rng_state()
             torch.save(rng_state, rng_state_path)
             print(f"Rank {self.rank} saving rng states to {rng_state_path}")
+
+            optimizer_scheduler_path = get_optimizer_scheduler_checkpoint_path(local_path, only_rank0_save=False)
+            if self.lr_scheduler is not None:
+                state_dict = self.lr_scheduler.state_dict()
+                torch.save(state_dict, optimizer_scheduler_path)
+                if self.rank == 0:
+                    print(f"Rank {self.rank} saving optimizer scheduler state to {optimizer_scheduler_path}")
 
         self.previous_saved_paths.append(local_path)
