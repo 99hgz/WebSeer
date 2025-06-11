@@ -18,5 +18,5 @@ actor_rollout_ref:
     name: sglang_async
     multi_turn:
       enable: True
-      max_turns: 5
+      max_turns: 20
       # tool_config_path: "./config/tool_config/gsm8k_tool_config.yaml"

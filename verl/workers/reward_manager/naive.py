@@ -67,13 +67,15 @@ class NaiveRewardManager:
             data_source = data_item.non_tensor_batch[self.reward_fn_key]
 
             extra_info = data_item.non_tensor_batch.get("extra_info", None)
-
-            score = self.compute_score(
-                data_source=data_source,
-                solution_str=response_str,
-                ground_truth=ground_truth,
-                extra_info=extra_info,
-            )
+            reward_scores = data_item.non_tensor_batch.get("reward_scores", None)
+            #print(f"{reward_scores=}")
+            score = reward_scores['guess'] + reward_scores['search']
+            # score = self.compute_score(
+            #     data_source=data_source,
+            #     solution_str=response_str,
+            #     ground_truth=ground_truth,
+            #     extra_info=extra_info,
+            # )
 
             if isinstance(score, dict):
                 reward = score["score"]
