@@ -124,5 +124,4 @@ ENV/
 # local logs
 logs
 log
-outputs
 .history
