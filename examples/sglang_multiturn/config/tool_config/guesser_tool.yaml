@@ -1,0 +1,60 @@
+tools:
+  - class_name: "verl.tools.guesser_tool.GuessTool"
+    config: {}
+    tool_schema:
+      type: "function"
+      function:
+        name: "guess"
+        description: "猜测一个符合描述的角色名称，可以多次猜测，最后必须使用guess工具提交正确答案才算完成任务。"
+        parameters:
+          type: "object"
+          properties:
+            character_name:
+              type: "string"
+              description: "你猜测的角色名称"
+          required: ["character_name"]
+  - class_name: "verl.tools.guesser_tool.SearchTool"
+    config: {}
+    tool_schema:
+      type: "function"
+      function:
+        name: "search"
+        description: "调用google搜索相关信息，请尽可能地使用这个工具收集信息"
+        parameters:
+          type: "object"
+          properties:
+            query:
+              type: "string"
+              description: "搜索关键词，较少的关键词效果比较好"
+          required: ["query"]
+  - class_name: "verl.tools.guesser_tool.QueryOnPageTool"
+    config: {}
+    tool_schema:
+      type: "function"
+      function:
+        name: "query_on_page"
+        description: "该工具会访问wiki中的具体页面，它会根据指定页面的内容回答问题。该助手没有上下文信息，请把问题描述完整。"
+        parameters:
+          type: "object"
+          properties:
+            url:
+              type: "string"
+              description: "页面url，必须是search工具提供的页面"
+            question:
+              type: "string"
+              description: "关于该页面内容的问题"
+          required: ["url", "question"]
+  # - class_name: "verl.tools.guesser_tool.GetContentTool"
+  #   config: {}
+  #   tool_schema:
+  #     type: "function"
+  #     function:
+  #       name: "get_content"
+  #       description: "获取wiki中的具体页面内容"
+  #       parameters:
+  #         type: "object"
+  #         properties:
+  #           url:
+  #             type: "string"
+  #             description: "页面URL，可以从search工具的结果中获取"
+  #         required: ["url"]

@@ -36,7 +36,7 @@ def run_ppo(config) -> None:
         # NCCL debug level, VLLM logging level, and allow runtime LoRA updating
         # `num_cpus` specifies the number of CPU cores Ray can use, obtained from the configuration
         ray.init(
-            runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN", "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true"}},
+            runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN", "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true","WANDB_MODE":"offline"}, "temp_dir": "/data3/hgz/tmp"},
             num_cpus=config.ray_init.num_cpus,
         )
 
@@ -146,8 +146,8 @@ class TaskRunner:
             mapping[Role.RefPolicy] = global_pool_id
 
         # Load the reward manager for training and validation.
-        reward_fn = load_reward_manager(config, tokenizer, num_examine=0, **config.reward_model.get("reward_kwargs", {}))
-        val_reward_fn = load_reward_manager(config, tokenizer, num_examine=1, **config.reward_model.get("reward_kwargs", {}))
+        reward_fn = load_reward_manager(config, tokenizer, num_examine=20, **config.reward_model.get("reward_kwargs", {}))
+        val_reward_fn = load_reward_manager(config, tokenizer, num_examine=4, **config.reward_model.get("reward_kwargs", {}))
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 
         from verl.utils.dataset.rl_dataset import collate_fn

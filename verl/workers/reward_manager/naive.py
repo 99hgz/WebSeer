@@ -78,14 +78,17 @@ class NaiveRewardManager:
             extra_info = data_item.non_tensor_batch.get("extra_info", None)
             reward_scores = data_item.non_tensor_batch.get("reward_scores", None)
             #print(f"{reward_scores=}")
-            score = reward_scores['guess'] + reward_scores['search']
+            score = {}
+            score['f1'] = reward_scores['submit_answer']
+            score['score'] = reward_scores['submit_answer']
+            score['query_times'] = response_str.count('query_on_page')
             # score = self.compute_score(
             #     data_source=data_source,
             #     solution_str=response_str,
             #     ground_truth=ground_truth,
             #     extra_info=extra_info,
             # )
-
+            
             if isinstance(score, dict):
                 reward = score["score"]
                 # Store the information including original reward
@@ -93,6 +96,16 @@ class NaiveRewardManager:
                     reward_extra_info[key].append(value)
             else:
                 reward = score
+
+            if 1:
+                overlong_buffer_len = 8192
+                expected_len = 30000 - overlong_buffer_len
+                exceed_len = valid_response_length - expected_len
+                overlong_penalty_factor = 1.0
+                overlong_reward = min(-exceed_len / overlong_buffer_len * overlong_penalty_factor, 0)
+                reward += overlong_reward
+                reward_extra_info["overlong_reward"].append(overlong_reward)
+                reward_extra_info["overlong"].append(overlong_reward < 0)
 
             reward_tensor[i, valid_response_length - 1] = reward
 

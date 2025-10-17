@@ -25,7 +25,7 @@ from transformers import GenerationConfig, PreTrainedTokenizer, ProcessorMixin
 
 from verl.utils.device import is_cuda_available
 from verl.utils.fs import copy_to_local, is_non_local
-from verl.utils.fsdp_utils import fsdp_version, get_fsdp_state_ctx
+from verl.utils.fsdp_utils import fsdp_version, get_fsdp_state_ctx, offload_fsdp_optimizer, offload_fsdp_model_to_cpu
 
 from .checkpoint_manager import BaseCheckpointManager
 
@@ -73,7 +73,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             checkpoint_contents=checkpoint_contents,
         )
 
-    def load_checkpoint(self, local_path: str, hdfs_path: str = None, del_local_after_load=False):
+    def load_checkpoint(self, local_path: str, hdfs_path: str = None, del_local_after_load=False, am = None):
         """
         Load an FSDP checkpoint for this rank.
 
@@ -116,8 +116,10 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         optim_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True if is_cuda_available else False)
         with get_fsdp_state_ctx(self.model, StateDictType.SHARDED_STATE_DICT, state_dict_cfg, optim_cfg):
             self.model.load_state_dict(model_state_dict)
+            offload_fsdp_model_to_cpu(am)
             if self.optimizer is not None:
                 self.optimizer.load_state_dict(optimizer_state_dict)
+                offload_fsdp_optimizer(self.optimizer)
         # recover random state
         if "rng" in extra_state_dict:
             # 'rng' may not exist for backward compatibility

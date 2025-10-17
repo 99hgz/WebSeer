@@ -732,6 +732,7 @@ class SGLangRollout(BaseRollout):
 
         current_turns = 0
         while current_turns < self.config.multi_turn.max_turns:
+            #print(_req.messages)
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
                 await self._handle_pending_state(_req)
                 _req.state = AsyncRolloutRequestStateEnum.RUNNING
@@ -749,8 +750,25 @@ class SGLangRollout(BaseRollout):
                         ]
                     )
                     _req.add_tool_response_messages(self.tokenizer, [resp for resp, _, _ in tool_call_results])
+                    _req_submitted = False
                     for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
                         _req.update_metrics(metrics, tool_call.function.name)
+                        #print(f"{tool_call.function.name=}")
+                        # if "submit" in tool_call.function.name.lower():
+                        #     finish_reason_type = FinishReasonTypeEnum.STOP
+                        #     _req_submitted = True
+                        if ("submit" in tool_call.function.name.lower()):
+                            # if 1:
+                            #     finish_reason_type = FinishReasonTypeEnum.STOP
+                            #     _req_submitted = True
+                            if ("Correct" in resp):
+                                finish_reason_type = FinishReasonTypeEnum.STOP
+                                _req_submitted = True
+                            if reward > 4.0:
+                                finish_reason_type = FinishReasonTypeEnum.STOP
+                                _req_submitted = True
+                    if _req_submitted:
+                        break
                     if len(_req.input_ids) >= self.config.max_model_len:
                         finish_reason_type = FinishReasonTypeEnum.STOP
                         break

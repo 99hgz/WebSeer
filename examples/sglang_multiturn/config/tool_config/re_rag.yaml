@@ -1,0 +1,60 @@
+tools:
+  - class_name: "verl.tools.re_rag_tool.SubmitAnswerTool"
+    config: {}
+    tool_schema:
+      type: "function"
+      function:
+        name: "submit_answer"
+        description: "Submit your final answer. You must use this tool to submit your answer before the dialog ends."
+        parameters:
+          type: "object"
+          properties:
+            answer:
+              type: "string"
+              description: "Your final answer"
+          required: ["answer"]
+  - class_name: "verl.tools.re_rag_tool.SearchTool"
+    config: {}
+    tool_schema:
+      type: "function"
+      function:
+        name: "search"
+        description: "Call google to search for relevant information."
+        parameters:
+          type: "object"
+          properties:
+            query:
+              type: "string"
+              description: "Search keywords"
+          required: ["query"]
+  - class_name: "verl.tools.re_rag_tool.QueryOnPageTool"
+    config: {}
+    tool_schema:
+      type: "function"
+      function:
+        name: "query_on_page"
+        description: "This tool will visit a specific page of url, and it will answer the question based on the content of the page. The assistant has no context information, please describe the question completely."
+        parameters:
+          type: "object"
+          properties:
+            url:
+              type: "string"
+              description: "The url of the page, must be a page provided by the search tool."
+            question:
+              type: "string"
+              description: "The question about the content of the page"
+          required: ["url", "question"]
+  # - class_name: "verl.tools.guesser_tool.GetContentTool"
+  #   config: {}
+  #   tool_schema:
+  #     type: "function"
+  #     function:
+  #       name: "get_content"
+  #       description: "获取wiki中的具体页面内容"
+  #       parameters:
+  #         type: "object"
+  #         properties:
+  #           url:
+  #             type: "string"
+  #             description: "页面URL，可以从search工具的结果中获取"
+  #         required: ["url"]

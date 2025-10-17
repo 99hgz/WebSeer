@@ -15,15 +15,16 @@
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional, List
 
 
 class OpenAIFunctionPropertySchema(BaseModel):
     """The schema of a parameter in OpenAI format."""
 
     type: str
-    description: str | None = None
-    enum: list[str] | None = None
+    description: Optional[str] = None
+    enum: Optional[List[str]] = None
 
 
 class OpenAIFunctionParametersSchema(BaseModel):
